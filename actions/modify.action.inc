@@ -126,7 +126,7 @@ function views_bulk_operations_modify_action_form($context, &$form_state) {
 
   $info = entity_get_info($entity_type);
   $properties = _views_bulk_operations_modify_action_get_properties($entity_type, $context['settings']['display_values']);
-  $bundles = _views_bulk_operations_modify_action_get_bundles($entity_type, $context);
+  $bundles = _views_bulk_operations_modify_action_get_bundles($entity_type, $context, $form_state);
 
   $form['#attached']['css'][] = drupal_get_path('module', 'views_bulk_operations') . '/css/modify.action.css';
   $form['#tree'] = TRUE;
@@ -483,8 +483,12 @@ function _views_bulk_operations_modify_action_get_properties($entity_type, $disp
  *   The entity type whose bundles will be fetched.
  * @param $context
  *   The VBO context variable.
+ * @param array $form_state
+ *   The form state array.
+ *
+ * @return array
  */
-function _views_bulk_operations_modify_action_get_bundles($entity_type, $context) {
+function _views_bulk_operations_modify_action_get_bundles($entity_type, $context, &$form_state) {
   $bundles = array();
 
   $view = $context['view'];
@@ -539,6 +543,25 @@ function _views_bulk_operations_modify_action_get_bundles($entity_type, $context
     // selected at least one field belonging to this bundle.
     if (!empty($display_values[VBO_MODIFY_ACTION_ALL]) || $has_enabled_fields) {
       $bundles[$bundle_name] = $bundle;
+    }
+  }
+
+  // Use EntityFieldQuery to detect bundles of the queried entities and filter
+  // out unused ones.
+  if (empty($form_state['values']['select_all'])) {
+    $entity_ids = array_filter($form_state['values']['views_bulk_operations']);
+    if (!empty($entity_ids)) {
+      $query = new EntityFieldQuery();
+      $query->entityCondition('entity_type', $entity_type)
+        ->entityCondition('entity_id', $entity_ids, 'IN');
+      $result = $query->execute();
+      if (!empty($result[$entity_type])) {
+        $result_bundles = array();
+        foreach ($result[$entity_type] as $entity) {
+          $result_bundles[$entity->{$info['entity keys']['bundle']}] = TRUE;
+        }
+        $bundles = array_intersect_key($bundles, $result_bundles);
+      }
     }
   }
 
