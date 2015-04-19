@@ -40,6 +40,13 @@ function views_bulk_operations_modify_action($entity, $context) {
       // already been figured out if this field is translatable or not and
       // applied the appropriate language code to the field
       $language = key($pseudo_entity->{$key});
+      // Detect target language if it was specified.
+      /* @see views_bulk_operations_modify_action_submit() */
+      $target_language = $language;
+      if (isset($pseudo_entity->{$key}['_vbo_field_target_language'])) {
+        $target_language = $pseudo_entity->{$key}['_vbo_field_target_language'];
+        unset($pseudo_entity->{$key}['_vbo_field_target_language']);
+      }
       // Replace any tokens that might exist in the field columns.
       foreach ($pseudo_entity->{$key}[$language] as $delta => &$item) {
         foreach ($item as $column => $value) {
@@ -50,11 +57,11 @@ function views_bulk_operations_modify_action($entity, $context) {
       }
 
       if (in_array($key, $context['append']['bundle_' . $bundle_name]) && !empty($entity->$key)) {
-        $entity->{$key}[$language] = array_merge($entity->{$key}[$language], $pseudo_entity->{$key}[$language]);
+        $entity->{$key}[$target_language] = array_merge($entity->{$key}[$language], $pseudo_entity->{$key}[$language]);
 
         // Check if we breached cardinality, and notify the user.
         $field_info = field_info_field($key);
-        $field_count = count($entity->{$key}[$language]);
+        $field_count = count($entity->{$key}[$target_language]);
         if ($field_info['cardinality'] != FIELD_CARDINALITY_UNLIMITED && $field_count > $field_info['cardinality']) {
           $entity_label = entity_label($context['entity_type'], $entity);
           $warning = t('Tried to set !field_count values for field !field_name that supports a maximum of !cardinality.',
@@ -66,11 +73,11 @@ function views_bulk_operations_modify_action($entity, $context) {
 
         // Prevent storing duplicate references.
         if (strpos($field_info['type'], 'reference') !== FALSE) {
-          $entity->{$key}[$language] = array_unique($entity->{$key}[LANGUAGE_NONE], SORT_REGULAR);
+          $entity->{$key}[$target_language] = array_unique($entity->{$key}[LANGUAGE_NONE], SORT_REGULAR);
         }
       }
       else {
-        $entity->{$key}[$language] = $pseudo_entity->{$key}[$language];
+        $entity->{$key}[$target_language] = $pseudo_entity->{$key}[$language];
       }
     }
   }
@@ -217,6 +224,26 @@ function views_bulk_operations_modify_action_form($context, &$form_state) {
     // This ensures that they will stay in the correct order when they get
     // assigned new weights.
     uasort($form[$form_key], 'element_sort');
+
+    // If the entity_translation module is enabled for the entity type, allow
+    // user to chose the target language of modifying field.
+    /* @see views_bulk_operations_modify_action_submit() */
+    if (module_invoke('entity_translation', 'enabled', $entity_type)) {
+      $language_options = array('' => t('Default'));
+      foreach (entity_translation_languages($entity_type) as $language) {
+        $language_options[$language->language] = t($language->name);
+      }
+      foreach (element_children($form[$form_key]) as $field_name) {
+        if (field_is_translatable($entity_type, field_info_field($field_name))) {
+          $form[$form_key][$field_name]['_vbo_field_target_language'] = array(
+            '#type' => 'select',
+            '#title' => t('Target language'),
+            '#description' => t('You can choose a target language for the field. Be sure that all queried entities are translated to the selected language. By default, the entity source language is used for update.'),
+            '#options' => $language_options,
+          );
+        }
+      }
+    }
 
     $display_values = $context['settings']['display_values'];
     $instances = field_info_instances($entity_type, $bundle_name);
@@ -396,6 +423,16 @@ function views_bulk_operations_modify_action_validate($form, &$form_state) {
 function views_bulk_operations_modify_action_submit($form, $form_state) {
   foreach ($form_state['entities'] as $bundle_name => $entity) {
     field_attach_submit($form_state['entity_type'], $entity, $form['bundle_' . $bundle_name], $form_state);
+
+    // If we have the field target languages set up in
+    /* @see views_bulk_operations_modify_action_form() */
+    // store those languages on the entity, so they are passed to
+    /* @see views_bulk_operations_modify_action() */
+    foreach (field_info_instances($form_state['entity_type'], $bundle_name) as $field_name => $_) {
+      if (!empty($form_state['values']['bundle_' . $bundle_name][$field_name]['_vbo_field_target_language'])) {
+        $entity->{$field_name}['_vbo_field_target_language'] = $form_state['values']['bundle_' . $bundle_name][$field_name]['_vbo_field_target_language'];
+      }
+    }
   }
 
   return array(
